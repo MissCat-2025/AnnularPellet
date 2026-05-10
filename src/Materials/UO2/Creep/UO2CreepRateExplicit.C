@@ -1,0 +1,186 @@
+// src/materials/UO2CreepRateExplicit.C
+#include "UO2CreepRateExplicit.h"
+
+registerADMooseObject("AnnularPelletApp", UO2CreepRateExplicit);
+
+InputParameters
+UO2CreepRateExplicit::validParams()
+{
+  InputParameters params = ADMaterial::validParams();
+  params.addRequiredCoupledVar("temperature", "Temperature in Kelvin");
+  params.addRequiredCoupledVar("oxygen_ratio", "Oxygen hyper-stoichiometry");
+  params.addRequiredParam<Real>("fission_rate", "Fission rate density (fissions/m^3-s)");
+  params.addParam<Real>("theoretical_density", 95.0, "Percent of theoretical density");
+  params.addParam<Real>("grain_size", 10.0, "Grain size in micrometers");
+  params.addParam<Real>("gas_constant", 8.314, "Universal gas constant (J/mol-K)");
+  params.addRequiredCoupledVar("vonMisesStress", "The von Mises stress auxiliary variable");
+  params.addParam<bool>("consider_transient_creep", false, "Whether to consider transient creep");
+  // 是否考虑MATPRO Halden模型，第三项去除温度依赖：https://mooseframework.inl.gov/bison/source/materials/solid_mechanics/UO2CreepUpdate.html
+  params.addParam<bool>("USE_MATPRO_Halden_model", false, "Whether to consider MATPRO Halden model,third term in Eq. (1) removing temperature dependency");
+  params.addParam<bool>("USE_transition_stress", false, "Whether to consider transition stress");
+  return params;
+}
+
+UO2CreepRateExplicit::UO2CreepRateExplicit(const InputParameters & parameters)
+  : ADMaterial(parameters),
+    _temperature(adCoupledValue("temperature")),
+    _oxygen_ratio(adCoupledValue("oxygen_ratio")),
+    _fission_rate(getParam<Real>("fission_rate")),
+    _theoretical_density(getParam<Real>("theoretical_density")),
+    _grain_size(getParam<Real>("grain_size")),
+    _gas_constant(getParam<Real>("gas_constant")),
+    _stress_old(getMaterialPropertyOld<RankTwoTensor>("stress")),
+    _stress_deviator(declareADProperty<RankTwoTensor>("stress_deviator")),
+    _vonMisesStress(adCoupledValue("vonMisesStress")),
+    _Q1(declareADProperty<Real>("Q1")),
+    _Q2(declareADProperty<Real>("Q2")),
+    _Q3(21759.0),
+    _creep_rate(declareADProperty<RankTwoTensor>("creep_rate")),
+    _effective_creep(declareADProperty<Real>("effective_creep")),
+    _consider_transient_creep(getParam<bool>("consider_transient_creep")),
+    _max_stress_time(declareADProperty<Real>("max_stress_time")),
+    _max_stress_time_old(getMaterialPropertyOld<Real>("max_stress_time")),
+    _max_stress(declareADProperty<Real>("max_stress")),
+    _max_stress_old(getMaterialPropertyOld<Real>("max_stress")),
+    _USE_MATPRO_Halden_model(getParam<bool>("USE_MATPRO_Halden_model")),
+    _USE_transition_stress(getParam<bool>("USE_transition_stress"))
+{
+}
+
+void
+UO2CreepRateExplicit::initQpStatefulProperties()
+{
+  // 初始化最大应力和时间
+  _max_stress[_qp] = 0.0;
+  _max_stress_time[_qp] = 0.0;
+}
+
+void
+UO2CreepRateExplicit::computeQpProperties()
+{
+  // 预计算常用值
+  const ADReal T = _temperature[_qp];
+  ADReal x = _oxygen_ratio[_qp];
+  if (MetaPhysicL::raw_value(x) <= 1.0)
+    x = 1.0 + 1e-12;
+  using MetaPhysicL::exp;
+  using MetaPhysicL::log10;
+  using MetaPhysicL::pow;
+  using std::exp;
+  using std::log10;
+  using std::pow;
+
+  const ADReal RT = _gas_constant * T;
+  const ADReal inv_RT = 1.0 / RT;
+  
+  // 计算偏应力张量
+  _stress_deviator[_qp] = _stress_old[_qp].deviatoric();
+  
+  // 计算有效应力
+  const ADReal stress = _vonMisesStress[_qp];
+  
+  // 更新最大应力历史和时间（用于瞬态蠕变）
+  if (_consider_transient_creep)
+  {
+    const Real current_stress = MetaPhysicL::raw_value(stress);
+
+    if (current_stress > _max_stress_old[_qp])
+    {
+      _max_stress[_qp] = current_stress;
+      _max_stress_time[_qp] = 0.0; // 重置时间
+    }
+    else
+    {
+      _max_stress[_qp] = _max_stress_old[_qp];
+      _max_stress_time[_qp] = _max_stress_time_old[_qp] + _dt;
+    }
+  }
+  
+  // 预计算氧化学计量比相关项
+  const ADReal log_x = log10(x); // 使用log10，与BISON文档一致
+  const ADReal exp_common = exp(-20.0 / log_x - 8.0);
+  const ADReal denom = 1.0 / (exp_common + 1.0);
+  
+  // 计算激活能
+  _Q1[_qp] = 74829.0 * denom + 301762.0;
+  _Q2[_qp] = 83143.0 * denom + 469191.0;
+  
+  // 预计算密度和晶粒尺寸相关项
+  const ADReal density_term1 = 1.0 / ((_theoretical_density - 87.7) * _grain_size * _grain_size);
+  const ADReal density_term2 = 1.0 / (_theoretical_density - 90.5);
+  
+  // 预计算裂变率项
+  const ADReal fission_term = 0.3919 + 1.31e-19 * _fission_rate;
+  
+  // 预计算指数项
+  const ADReal exp_Q1 = exp(-_Q1[_qp] * inv_RT);
+  const ADReal exp_Q2 = exp(-_Q2[_qp] * inv_RT);
+  const ADReal exp_Q3 = exp(-_Q3 * inv_RT);
+  
+  // 计算转变应力
+  const Real sigma_trans = 1.6547e7 * std::pow(_grain_size, 0.5714);
+  
+  // 计算各分量蠕变率
+  ADReal creep_th1 = 0.0;
+  ADReal creep_th2 = 0.0;
+  
+  // 根据是否使用转变应力来计算热蠕变
+  if (_USE_transition_stress)
+  {
+    // 使用转变应力 - MATPRO原始模型
+    if (stress < sigma_trans)
+    {
+      // 低应力区域：使用线性项，忽略幂律项
+      creep_th1 = fission_term * density_term1 * stress * exp_Q1;
+      creep_th2 = 0.0;
+    }
+    else
+    {
+      // 高应力区域：线性项使用转变应力，幂律项使用实际应力
+      creep_th1 = fission_term * density_term1 * sigma_trans * exp_Q1;
+      creep_th2 = 2.0391e-25 * density_term2 * pow(stress, 4.5) * exp_Q2;
+    }
+  }
+  else
+  {
+    // 不使用转变应力(BISON默认方式) - 同时应用两项
+    creep_th1 = fission_term * density_term1 * stress * exp_Q1;
+    creep_th2 = 2.0391e-25 * density_term2 * pow(stress, 4.5) * exp_Q2;
+  }
+  
+  // 辐照蠕变 - 根据是否使用MATPRO-Halden模型
+  ADReal creep_ir = 0.0;
+  if (_USE_MATPRO_Halden_model)
+  {
+    // 使用Halden关联式 - 不依赖温度
+    creep_ir = 7.78e-37 * _fission_rate * stress;
+  }
+  else
+  {
+    // 使用原始MATPRO公式 - 含温度依赖性
+    creep_ir = 3.7226e-35 * _fission_rate * stress * exp_Q3;
+  }
+  
+  // 计算总标量蠕变率
+  ADReal scalar_rate = creep_th1 + creep_th2 + creep_ir;
+  
+  // 应用瞬态蠕变效应
+  if (_consider_transient_creep)
+  {
+    // 基于公式(2-65)应用瞬态蠕变系数
+    const ADReal transient_factor = 2.5 * exp(-1.40e-6 * _max_stress_time[_qp]) + 1.0;
+    scalar_rate *= transient_factor;
+  }
+  _effective_creep[_qp] = scalar_rate;
+  // 使用标量蠕变率和流动方向计算蠕变率张量
+  if (MetaPhysicL::raw_value(stress) > 1e-10)
+  {
+    // 计算标准化的流动方向
+    const auto flow_direction = _stress_deviator[_qp] * (1.5 / stress);
+    
+    // 使用流动方向和标量蠕变率
+    _creep_rate[_qp] = scalar_rate * flow_direction;
+  }
+  else
+    _creep_rate[_qp].zero();
+}

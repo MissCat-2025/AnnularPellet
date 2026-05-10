@@ -1,0 +1,57 @@
+#include "AnnularPelletApp.h"
+#include "Moose.h"
+#include "AppFactory.h"
+#include "ModulesApp.h"
+#include "MooseSyntax.h"
+
+// Include RACCOON app
+#include "base/raccoonApp.h"
+
+InputParameters
+AnnularPelletApp::validParams()
+{
+  InputParameters params = MooseApp::validParams();
+  params.set<bool>("use_legacy_material_output") = false;
+  params.set<bool>("use_legacy_initial_residual_evaluation_behavior") = false;
+  return params;
+}
+
+AnnularPelletApp::AnnularPelletApp(const InputParameters & parameters) : MooseApp(parameters)
+{
+  AnnularPelletApp::registerAll(_factory, _action_factory, _syntax);
+}
+
+AnnularPelletApp::~AnnularPelletApp() {}
+
+void
+AnnularPelletApp::registerAll(Factory & f, ActionFactory & af, Syntax & syntax)
+{
+  ModulesApp::registerAllObjects<AnnularPelletApp>(f, af, syntax);
+  
+  // Register RACCOON
+  raccoonApp::registerAll(f, af, syntax);
+  Registry::registerObjectsTo(f, {"AnnularPelletApp"});
+  Registry::registerActionsTo(af, {"AnnularPelletApp"});
+
+  /* register custom execute flags, action syntax, etc. here */
+}
+
+void
+AnnularPelletApp::registerApps()
+{
+  registerApp(AnnularPelletApp);
+}
+
+/***************************************************************************************************
+ *********************** Dynamic Library Entry Points - DO NOT MODIFY ******************************
+ **************************************************************************************************/
+extern "C" void
+AnnularPelletApp__registerAll(Factory & f, ActionFactory & af, Syntax & s)
+{
+  AnnularPelletApp::registerAll(f, af, s);
+}
+extern "C" void
+AnnularPelletApp__registerApps()
+{
+  AnnularPelletApp::registerApps();
+}
