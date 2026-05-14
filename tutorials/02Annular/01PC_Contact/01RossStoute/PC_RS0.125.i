@@ -1,9 +1,12 @@
-# === 参数研究案例 ===
-# grain_size: 10
-# 生成时间: 2026-05-13 23:11:51
 
-# conda activate moose && dos2unix 2D.i &&mpirun -n 3 /home/yp/projects/annular_pellet/annular_pellet-opt -i 2D.i
-initial_T = 273.15
+
+
+
+
+# conda activate moose && dos2unix PC_RS0.125.i &&mpirun -n 3 /home/yp/projects/annular_pellet/annular_pellet-opt -i PC_RS0.125.i
+initial_T = 300
+initial_T_in = 570.7
+initial_T_out = 582.8
 EndTime = 2e8
 pellet_nu = 0.345
 # pellet_thermal_expansion_coef=1e-5#K-1
@@ -50,11 +53,12 @@ outclad_inner_diameter = 14.224    # 外包壳内直径
 outclad_outer_diameter = 15.367     # 外包壳外直径                   # 轴向长度(m)
 
 # 网格控制参数n_azimuthal = 512时网格尺寸为6.8e-5m
-n_radial_inner_clad = 3    # 内包壳径向单元数
-mesh_size = 8e-5 #网格尺寸即可
-n_azimuthal = '${fparse int(3.1415*(pellet_outer_diameter)/mesh_size*1e-3/4)*4}' #int()取整
-n_radial_pellet = '${fparse int((pellet_outer_diameter-pellet_inner_diameter)/mesh_size*1e-3/2)}'
-n_radial_outer_clad = 3    # 外包壳径向单元数
+n_radial_inner_clad = 8    # 内包壳径向单元数
+w = 2 #裂纹尖端时，l是mesh_size的2**w倍
+mesh_size = '${fparse 5e-5}' #网格尺寸即可
+n_azimuthal = '${fparse int(3.1415*(pellet_outer_diameter)/8/mesh_size*1e-3/2^(w-2))}' #int()取整
+n_radial_pellet = '${fparse int((pellet_outer_diameter-pellet_inner_diameter)/mesh_size*1e-3/2^(w-1))}'
+n_radial_outer_clad = 8    # 外包壳径向单元数
 growth_factor = 1.006       # 径向增长因子
 # 计算半径参数 (转换为米)
 inner_clad_inner_radius = '${fparse inclad_inner_diameter/2*1e-3}'
@@ -72,6 +76,8 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     rmax = ${inner_clad_outer_radius}
     growth_r = ${growth_factor}
     boundary_id_offset = 10
+    dmin = 0
+    dmax = 45
     boundary_name_prefix = 'inclad'
   []
   [inner_clad]
@@ -86,6 +92,8 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     rmin = ${pellet_inner_radius}
     rmax = ${pellet_outer_radius}
     growth_r = ${growth_factor}
+        dmin = 0
+    dmax = 45
     boundary_id_offset = 20
     boundary_name_prefix = 'pellet'
   []
@@ -101,6 +109,8 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     rmin = ${outer_clad_inner_radius}
     rmax = ${outer_clad_outer_radius}
     growth_r = ${growth_factor}
+        dmin = 0
+    dmax = 45
     boundary_id_offset = 30
     boundary_name_prefix = 'outclad'
   []
@@ -119,23 +129,9 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     old_boundary = 'inclad_rmin inclad_rmax pellet_rmin pellet_rmax outclad_rmin outclad_rmax'
     new_boundary = 'inclad_inner inclad_outer pellet_inner pellet_outer outclad_inner outclad_outer'
   []
-  [cut_x]
-    type = PlaneDeletionGenerator
-    input = rename1
-    point = '0 0 0'
-    normal = '-1 0 0'  # 切割x>0区域
-    new_boundary = 'y_axis'
-  []
-  [cut_y]
-    type = PlaneDeletionGenerator
-    input = cut_x
-    point = '0 0 0'
-    normal = '0 -1 0'  # 切割y>0区域
-    new_boundary = 'x_axis'
-  []
   [rename2]
     type = RenameBlockGenerator
-    input = cut_y
+    input = rename1
     old_block = '1 2 3'
     new_block = 'inclad pellet outclad'
   []
@@ -292,14 +288,25 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
   [y_zero_on_y_plane]
     type = DirichletBC
     variable = disp_y
-    boundary = 'x_axis'
+    boundary = 'pellet_dmin inclad_dmin outclad_dmin'
     value = 0
   []
-  [x_zero_on_x_plane]
-    type = DirichletBC
+  # 45度对称面的法向位移惩罚边界条件
+  [fortyfive_plane_x]
+    type = ADPenaltyInclinedNoDisplacementBC
     variable = disp_x
-    boundary = 'y_axis'
-    value = 0
+    boundary = 'pellet_dmax inclad_dmax outclad_dmax'
+    component = 0
+    penalty = 1e18
+    displacements = 'disp_x disp_y'
+  []
+  [fortyfive_plane_y]
+    type = ADPenaltyInclinedNoDisplacementBC
+    variable = disp_y
+    boundary = 'pellet_dmax inclad_dmax outclad_dmax'
+    component = 1
+    penalty = 1e18
+    displacements = 'disp_x disp_y'
   []
 
   #芯块包壳间隙压力
@@ -342,14 +349,14 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     type = ConvectiveFluxFunction
     variable = T
     boundary = 'inclad_inner'
-    T_infinity = ${initial_T}
+    T_infinity = ${initial_T_in}
     coefficient = coolant_conductance_in#3500 W·m-2 K-1！！！！！！！！！！！！！！！！！！！！！！！！！！！
   []
   [coolant_bc_out]#对流边界条件
   type = ConvectiveFluxFunction
   variable = T
   boundary = 'outclad_outer'
-  T_infinity = ${initial_T}
+  T_infinity = ${initial_T_out}
   coefficient = coolant_conductance_out#3500 W·m-2 K-1！！！！！！！！！！！！！！！！！！！！！！！！！！！
   []
   #冷却剂压力
@@ -446,6 +453,19 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
       thermal_expansion_coeff = ${clad_thermal_expansion_coef}
       temperature = T
       block = 'inclad outclad'
+    []
+
+    # 功率密度和径向功率形状因子（AD 材料属性，供热源核使用）
+    [total_power]
+      type = ADPower
+      power_history = 'power_history'
+      pellet_inner_radius = ${pellet_inner_radius}
+      pellet_outer_radius = ${pellet_outer_radius}
+      use_rim_effect = true   # 与 BurnupAux 保持一致
+      burnup = burnup         # 耦合 AuxVariable，使用其上一时步旧值计算径向因子
+      block = pellet
+      output_properties = 'total_power radial_power_shape'
+      outputs = exodus
     []
     [swelling_coef]
       type = ADDerivativeParsedMaterial  # 改为ADParsedMaterial
@@ -691,7 +711,6 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
 []
 
 [Outputs]
- 
   exodus = true #表示输出exodus格式文件
   print_linear_residuals = false
   file_base = 'gap_conductance1/2D'
@@ -780,11 +799,14 @@ power_factor = '${fparse 1000*1/3.1415926/(pellet_outer_radius^2-pellet_inner_ra
     primary = inclad_outer
     secondary = pellet_inner
     model = frictionless
-    formulation = mortar
-    correct_edge_dropping = true
-    tangential_tolerance = 1e-6
-    normal_smoothing_distance = 5e-6
-    capture_tolerance = 5e-6
+    formulation = mortar # 约束施加方式：mortar（基于弱形式/LM）
+    correct_edge_dropping = true # 防止边缘节点丢失接触
+    tangential_tolerance = 1e-6 # 切向滑移容差（影响摩擦/滑移检测）
+    normal_smoothing_distance = 1e-7 # 法向光滑距离,
+    #在此距离范围内，主面上的节点会被用来平均从面的法向，使法向连续变化，避免因网格离散导致的接触力震荡。该值应远小于局部几何特征尺寸，且不宜大于 capture_tolerance。
+    capture_tolerance = 6.349e-7 # 接触捕捉容差（关键参数）
+    # 这是实现“间隙小于某值即视为接触”的核心参数。
+# 它定义了一个法向“捕捉”距离：当从面节点到主面的有向距离 ≤ capture_tolerance 时，该节点即被认为进入接触状态，并激活无穿透约束。
   []
   [mechanical_contact_outer]
     primary = outclad_inner
@@ -793,8 +815,9 @@ power_factor = '${fparse 1000*1/3.1415926/(pellet_outer_radius^2-pellet_inner_ra
     formulation = mortar
     correct_edge_dropping = true
     tangential_tolerance = 1e-6
-    normal_smoothing_distance = 5e-6
-    capture_tolerance = 5e-6
+    normal_smoothing_distance = 1e-7 # 法向光滑距离,
+    #在此距离范围内，主面上的节点会被用来平均从面的法向，使法向连续变化，避免因网格离散导致的接触力震荡。该值应远小于局部几何特征尺寸，且不宜大于 capture_tolerance。
+    capture_tolerance = 6.349e-7 # 接触捕捉容差（关键参数）
   []
 []
 # 'inclad_inner inclad_outer pellet_inner pellet_outer outclad_inner outclad_outer'

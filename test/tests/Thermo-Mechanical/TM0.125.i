@@ -1,4 +1,4 @@
-# conda activate moose && mpirun -n 8 /home/yp/projects/annular_pellet/annular_pellet-opt -i TM0.125_bad.i
+# conda activate moose && mpirun -n 8 /home/yp/projects/annular_pellet/annular_pellet-opt -i TM0.125.i
 initial_T = 558.2
 initial_T_in = 570.7
 initial_T_out = 582.8
