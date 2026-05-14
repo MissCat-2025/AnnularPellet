@@ -1,4 +1,4 @@
-# conda activate moose && mpirun -n 8 /home/yp/projects/annular_pellet/annular_pellet-opt -i TM0.125.i
+# conda activate moose && mpirun -n 8 /home/yp/projects/annular_pellet/annular_pellet-opt -i TM0.125_bad.i
 initial_T = 558.2
 initial_T_in = 570.7
 initial_T_out = 582.8
@@ -73,6 +73,12 @@ pellet_outer_radius = '${fparse pellet_outer_diameter/2*1e-3}'
     order = CONSTANT
     family = MONOMIAL
   []
+    [burnup]
+    order = CONSTANT
+    family = MONOMIAL
+    block = pellet
+    initial_condition = 1e-12  # 避免首步 Bu=0 导致 pow(0,0.55) 的数值问题
+  []
 []
 
 
@@ -91,6 +97,18 @@ pellet_outer_radius = '${fparse pellet_outer_diameter/2*1e-3}'
     execute_on = 'TIMESTEP_END'
     scalar_type = VonMisesStress
     # 不需要 index_i 和 index_j，因为我们使用 VonMisesStress 标量类型
+  []
+    # 燃耗更新：使用上一时步 burnup 旧值（显式）计算功率，积分更新 burnup
+  [burnup_update]
+    type = BurnupAux
+    variable = burnup
+    block = pellet
+    execute_on = 'TIMESTEP_END'
+    power_history = 'power_history'
+    pellet_inner_radius = ${pellet_inner_radius}
+    pellet_outer_radius = ${pellet_outer_radius}
+    use_rim_effect = true   # 设为 false 可退化为均匀功率分布
+    # A B C D N_av M_w alpha 均使用默认值，可按需覆盖
   []
 []
 
@@ -156,6 +174,25 @@ pellet_outer_radius = '${fparse pellet_outer_diameter/2*1e-3}'
     boundary = x_axis
     value = 0.0
   []
+  
+  # 45度对称面的法向位移惩罚边界条件
+  [fortyfive_plane_x]
+    type = ADPenaltyInclinedNoDisplacementBC
+    variable = disp_x
+    boundary = fortyfive_plane
+    component = 0
+    penalty = 1e18
+    displacements = 'disp_x disp_y'
+  []
+  [fortyfive_plane_y]
+    type = ADPenaltyInclinedNoDisplacementBC
+    variable = disp_y
+    boundary = fortyfive_plane
+    component = 1
+    penalty = 1e18
+    displacements = 'disp_x disp_y'
+  []
+
   #芯块包壳间隙压力
   [gap_pressure_fuel_x]
     type = Pressure
@@ -195,11 +232,12 @@ pellet_outer_radius = '${fparse pellet_outer_diameter/2*1e-3}'
       prop_values = '${pellet_density} ${pellet_nu}'
     []
 
-    [pellet_thermal_conductivity] #新加的！！！！！！！！！！！！！！！！！！！！！！
+    [pellet_thermal_conductivity]
       type = ADParsedMaterial
       property_name = thermal_conductivity #参考某论文来的，不是Fink-Lukuta model（非常复杂）
-      coupled_variables = 'T'
-      expression = '(100/(7.5408 + 17.692*T/1000 + 3.6142*(T/1000)^2) + 6400/((T/1000)^2.5)*exp(-16.35/(T/1000)))'
+      coupled_variables = 'T burnup'
+      expression = '(1 / ((0.1148 + 0.0035 * (burnup*100*9.3)) + (0.0002474 -8.24e-7 * (burnup*100*9.3)) * T) + 0.0132 * exp(0.00188 * T))'
+      block = pellet
     []
     [pellet_specific_heat]
       type = ADParsedMaterial
@@ -216,12 +254,14 @@ pellet_outer_radius = '${fparse pellet_outer_diameter/2*1e-3}'
       constant_expressions = '${density_percent}'
     []
     [total_power]
-      type = ADRimEffertPowerBurnup
-      power_history = 'power_history'  # 声明使用的函数
-      pellet_inner_radius = ${pellet_inner_radius}  # 为函数指定符号名称
-      pellet_outer_radius = ${pellet_outer_radius}  # 直接使用函数符号进行计算
+      type = ADPower
+      power_history = 'power_history'
+      pellet_inner_radius = ${pellet_inner_radius}
+      pellet_outer_radius = ${pellet_outer_radius}
+      use_rim_effect = true   # 与 BurnupAux 保持一致
+      burnup = burnup         # 耦合 AuxVariable，使用其上一时步旧值计算径向因子
       block = pellet
-      output_properties = 'total_power burnup radial_power_shape'
+      output_properties = 'total_power radial_power_shape'
       outputs = exodus
     []
     [thermal_eigenstrain_coef]
