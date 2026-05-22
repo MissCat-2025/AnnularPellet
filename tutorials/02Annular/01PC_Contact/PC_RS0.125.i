@@ -26,14 +26,14 @@ endTime = 2e8#2e7
 LinearPower0_2 = '${fparse LinearPower*0.2}'
 
 # dtmin = 125
-Ndt = 200
-dt = '${fparse PowMaxTime/Ndt}'
-dt2 = '${fparse PowMaxTime/Ndt}'
-dtMax = 100000
+# Ndt = 200
+# dt = '${fparse PowMaxTime/Ndt}'
+# dt2 = '${fparse PowMaxTime/Ndt}'
+# dtMax = 100000
 endTime__100000 = '${fparse endTime-100000}'
-endTime__85000 = '${fparse endTime-85000}'
+# endTime__85000 = '${fparse endTime-85000}'
 endTime__50000 = '${fparse endTime-50000}'
-endTime__30000 = '${fparse endTime-30000}'
+# endTime__30000 = '${fparse endTime-30000}'
 # clad_specific_heat=264.5
 # clad_thermal_conductivity = 16
 clad_thermal_expansion_coef=5.0e-6#K-1
@@ -56,7 +56,7 @@ outclad_outer_diameter = 15.367     # 外包壳外直径                   # 轴
 n_radial_inner_clad = 8    # 内包壳径向单元数
 w = 2 #裂纹尖端时，l是mesh_size的2**w倍
 mesh_size = '${fparse 5e-5}' #网格尺寸即可
-n_azimuthal = '${fparse int(3.1415*(pellet_outer_diameter)/8/mesh_size*1e-3/2^(w-2))}' #int()取整
+n_azimuthal = '${fparse int(3.1415*(pellet_outer_diameter)/24/mesh_size*1e-3/2^(w-2))}' #int()取整
 n_radial_pellet = '${fparse int((pellet_outer_diameter-pellet_inner_diameter)/mesh_size*1e-3/2^(w-1))}'
 n_radial_outer_clad = 8    # 外包壳径向单元数
 growth_factor = 1.006       # 径向增长因子
@@ -77,7 +77,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     growth_r = ${growth_factor}
     boundary_id_offset = 10
     dmin = 0
-    dmax = 45
+    dmax = 15
     boundary_name_prefix = 'inclad'
   []
   [inner_clad]
@@ -93,7 +93,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     rmax = ${pellet_outer_radius}
     growth_r = ${growth_factor}
         dmin = 0
-    dmax = 45
+    dmax = 15
     boundary_id_offset = 20
     boundary_name_prefix = 'pellet'
   []
@@ -110,7 +110,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     rmax = ${outer_clad_outer_radius}
     growth_r = ${growth_factor}
         dmin = 0
-    dmax = 45
+    dmax = 15
     boundary_id_offset = 30
     boundary_name_prefix = 'outclad'
   []
@@ -297,7 +297,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     variable = disp_x
     boundary = 'pellet_dmax inclad_dmax outclad_dmax'
     component = 0
-    penalty = 1e18
+    penalty = 1e20
     displacements = 'disp_x disp_y'
   []
   [fortyfive_plane_y]
@@ -305,7 +305,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
     variable = disp_y
     boundary = 'pellet_dmax inclad_dmax outclad_dmax'
     component = 1
-    penalty = 1e18
+    penalty = 1e20
     displacements = 'disp_x disp_y'
   []
 
@@ -489,7 +489,7 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
       property_name = densification_coef
       coupled_variables = 'T burnup'
       material_property_names = 'CD_factor(T)'
-      expression = '0.03 * (exp(-4.605 * (burnup*1) / (CD_factor * 0.006024)) - 1)/3'# 0.6024是5000MWd/tU的转换系数
+      expression = '0.01 * (exp(-4.605 * (burnup*1) / (CD_factor * 0.006024)) - 1)/3'# 0.6024是5000MWd/tU的转换系数
       block = pellet
             outputs = exodus
       output_properties = 'densification_coef'
@@ -606,21 +606,30 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
   line_search =  contact
   contact_line_search_ltol = 0.5
   contact_line_search_allowed_lambda_cuts = 1
-  nl_max_its = 10
+  nl_max_its = 12
   nl_rel_tol = 1e-4 # 非线性求解的相对容差
-  nl_abs_tol = 1e-6 # 非线性求解的绝对容差
+  nl_abs_tol = 1e-5 # 非线性求解的绝对容差
   l_tol = 1e-5  # 线性求解的容差
-  l_abs_tol = 1e-7 # 线性求解的绝对容差
+  l_abs_tol = 1e-6 # 线性求解的绝对容差
   l_max_its = 50 # 线性求解的最大迭代次数
   accept_on_max_fixed_point_iteration = true # 达到最大迭代次数时接受解
-  dtmin = 1e-6
+  # dtmin = 1e-6
   dtmax = 100000
   end_time = ${EndTime} # 总时间24h
 
   fixed_point_rel_tol =1e-4 # 固定点迭代的相对容差
-  [TimeStepper]
-    type = FunctionDT
-    function = dt_limit_func
+  # [TimeStepper]
+  #   type = FunctionDT
+  #   function = dt_limit_func
+  # []
+    # []
+    [TimeStepper]
+    type = IterationAdaptiveDT
+    dt = 1000
+    growth_factor = 2
+    cutback_factor = 0.1
+    optimal_iterations = 8
+    iteration_window = 3
   []
 []
 
@@ -727,6 +736,12 @@ outer_clad_outer_radius = '${fparse outclad_outer_diameter/2*1e-3}'
   #   optimal_iterations = 8
   #   iteration_window = 4
   # []
+    [my_checkpoint]
+    type = Checkpoint
+    time_step_interval = 5    # 每5个时间步保存
+    num_files = 4            # 保留最近4个检查点
+    wall_time_interval = 600 # 每10分钟保存一次（秒）
+  []
   [./csv]
     type = CSV
     precision = 5  # 默认保留1位小数
@@ -781,16 +796,16 @@ power_factor = '${fparse 1000*1/3.1415926/(pellet_outer_radius^2-pellet_inner_ra
     type = ParsedFunction
     expression = '0.04679 + 3.81e-4*t - 6.786e-8*t^2'
   []
-  [dt_limit_func]
-  type = ParsedFunction
-  expression = 'if(t < 100000, 2000,
-                 if(t < (${PowMaxTime}*1.2), ${dt},
-                 if(t < (${endTime__100000}-${dtMax}),${dtMax},
-                 if(t < (${endTime__100000}),(10*${dt}),
-                 if(t < (${endTime__85000}),(2*${dt}),
-                 if(t < (${endTime__30000}),${dt2},
-                 if(t < (${endTime__30000}+10000),(4*${dt2}),5000)))))))'
-[]
+#   [dt_limit_func]
+#   type = ParsedFunction
+#   expression = 'if(t < 100000, 2000,
+#                  if(t < (${PowMaxTime}*1.2), ${dt},
+#                  if(t < (${endTime__100000}-${dtMax}),${dtMax},
+#                  if(t < (${endTime__100000}),(10*${dt}),
+#                  if(t < (${endTime__85000}),(2*${dt}),
+#                  if(t < (${endTime__30000}),${dt2},
+#                  if(t < (${endTime__30000}+10000),(4*${dt2}),5000)))))))'
+# []
 []
 
 
@@ -801,10 +816,10 @@ power_factor = '${fparse 1000*1/3.1415926/(pellet_outer_radius^2-pellet_inner_ra
     model = frictionless
     formulation = mortar # 约束施加方式：mortar（基于弱形式/LM）
     correct_edge_dropping = true # 防止边缘节点丢失接触
-    tangential_tolerance = 1e-6 # 切向滑移容差（影响摩擦/滑移检测）
-    normal_smoothing_distance = 1e-7 # 法向光滑距离,
+    tangential_tolerance = 5e-6 # 切向滑移容差（影响摩擦/滑移检测）
+    normal_smoothing_distance = 5e-6 # 法向光滑距离,
     #在此距离范围内，主面上的节点会被用来平均从面的法向，使法向连续变化，避免因网格离散导致的接触力震荡。该值应远小于局部几何特征尺寸，且不宜大于 capture_tolerance。
-    capture_tolerance = 6.349e-7 # 接触捕捉容差（关键参数）
+    capture_tolerance = 5e-6 # 接触捕捉容差（关键参数）
     # 这是实现“间隙小于某值即视为接触”的核心参数。
 # 它定义了一个法向“捕捉”距离：当从面节点到主面的有向距离 ≤ capture_tolerance 时，该节点即被认为进入接触状态，并激活无穿透约束。
   []
@@ -814,10 +829,10 @@ power_factor = '${fparse 1000*1/3.1415926/(pellet_outer_radius^2-pellet_inner_ra
     model = frictionless
     formulation = mortar
     correct_edge_dropping = true
-    tangential_tolerance = 1e-6
-    normal_smoothing_distance = 1e-7 # 法向光滑距离,
+    tangential_tolerance = 5e-6
+    normal_smoothing_distance = 5e-6 # 法向光滑距离,
     #在此距离范围内，主面上的节点会被用来平均从面的法向，使法向连续变化，避免因网格离散导致的接触力震荡。该值应远小于局部几何特征尺寸，且不宜大于 capture_tolerance。
-    capture_tolerance = 6.349e-7 # 接触捕捉容差（关键参数）
+    capture_tolerance = 5e-6 # 接触捕捉容差（关键参数）
   []
 []
 # 'inclad_inner inclad_outer pellet_inner pellet_outer outclad_inner outclad_outer'
